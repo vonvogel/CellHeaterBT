@@ -1,3 +1,6 @@
+//includes for EEPROM to store data when microcontroller is off
+#include <EEPROM.h>
+
 //includes for temperature sensors
 #include <OneWire.h>
 #include <DallasTemperature.h>
