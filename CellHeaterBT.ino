@@ -1,5 +1,5 @@
-//includes for EEPROM to store data when microcontroller is off
-#include <EEPROM.h>
+//includes for Servo
+#include <Servo.h>
 
 //includes for temperature sensors
 #include <OneWire.h>
@@ -9,10 +9,10 @@
 #include <SoftwareSerial.h>
 
 //include for PID-library
-#include <PID_v1.h>
+#include <PID_v1.h> //http://playground.arduino.cc/Code/PIDLibrary, https://github.com/br3ttb/Arduino-PID-Library
 
-//include fro parsing serial command
-#include <SerialCommand.h>
+//include for parsing serial command
+#include <SerialCommand.h> //https://github.com/kroimon/Arduino-SerialCommand.git
 
 // Data wire is plugged into port 2 on the Arduino
 #define ONE_WIRE_BUS 2
@@ -24,10 +24,13 @@
 #define TEMPRES 12
 
 //Minimal duration between serial send (ms)
-#define SERDELAY 10000
+#define SERDELAY 1000
 
 //Setup software serial
-SoftwareSerial SWSerial(4,5);
+SoftwareSerial SWSerial=SoftwareSerial(4,5); // RX, TX
+
+//Set up Serial command
+SerialCommand swCmd(SWSerial);
 
 // Setup a oneWire instance to communicate with any OneWire devices (not just Maxim/Dallas temperature ICs)
 OneWire oneWire(ONE_WIRE_BUS);
@@ -39,11 +42,16 @@ DallasTemperature sensors(&oneWire);
 DeviceAddress Thermometer[5];
 
 //Adress of the controling themometer
-byte ControlAdress[8]={40,51,223,57,3,0,0,164};
+byte ControlAdress[8]={0x28,0x34,0x98,0x3A,0x03,0x00,0x00,0x11};
 int ControlDevice;
 
 // Variable to hold number of devices found
 int numDev;
+
+//Set up servo
+Servo Shutter;
+
+#define SERVOPIN 10
 
 //Vars for temp
 double targetTemp = 37.0;
@@ -66,43 +74,46 @@ PID myPID(&currentTemp, &output, &targetTemp, Kp, Ki, Kd, DIRECT);
 void setup()
 {
   //initialise serial over USB
-  Serial.begin(115200);
+  Serial.begin(9600);
 
   //Initialise software serial
   SWSerial.begin(9600);
   
-  Serial.println("Locating devices.");
-  SWSerial.println("Locating devices.");
-  
+  //Setup serial commands
+  swCmd.addCommand("T",Tcmd);
+  swCmd.addCommand("S",Scmd);
+  swCmd.addCommand("P",Pcmd);
+  swCmd.addCommand("I",Icmd);
+  swCmd.addCommand("D",Dcmd);
+  swCmd.addCommand("R",Rcmd);
+  swCmd.addDefaultHandler(unrecognized);
+
+  //Servo attach
+  Shutter.attach(SERVOPIN);
+
+  SWprintln("Locating devices.");
   //initialise the temp sensors on onewWire bus
   sensors.begin();
-
 
   // print number of sensors
   numDev=sensors.getDeviceCount();
   
-  Serial.print("Found ");
-  Serial.print(numDev);
-  Serial.println(" devices");
-  SWSerial.print("Found ");
-  SWSerial.print(numDev);
-  SWSerial.println(" devices");
+  SWprint("Found ");
+  SWprinti(numDev);
+  SWprintln(" devices");
+
   
   //assign temp sensor adress and print it
   for (int i=0;i<numDev;i++) {
     if (!sensors.getAddress(Thermometer[i], i)) {
-      Serial.print("Error: device ");
-      Serial.println(i);
-      SWSerial.print("Error: device ");
-      SWSerial.println(i);
+      SWprint("Error: device ");
+      SWprinti(i);
+      SWprintln("");
       delay(1000);
     } else {
-      Serial.print("Device ");
-      Serial.print(i);
-      Serial.print(": ");
-      SWSerial.print("Device ");
-      SWSerial.print(i);
-      SWSerial.print(": ");
+      SWprint("Device ");
+      SWprinti(i);
+      SWprint(": ");
       printAddress(Thermometer[i]);
       sensors.setResolution(Thermometer[i], TEMPRES);
       delay(1000);
@@ -112,43 +123,27 @@ void setup()
     }
   }
 
-  Serial.print("Control themometer is: ");
-  Serial.println(ControlDevice);
-  SWSerial.print("Control themometer is: ");
-  SWSerial.println(ControlDevice);
-  
+  SWprint("Control themometer is: ");
+  SWprinti(ControlDevice);
+  SWprintln("");
+
   //initialise PID library
   myPID.SetMode(AUTOMATIC);
   
-  Serial.print("PID set to:");
-  Serial.print(" ");
-  Serial.print(Kp);
-  Serial.print(" ");
-  Serial.print(Ki);
-  Serial.print(" ");
-  Serial.println(Kd);
-  SWSerial.print("PID set to:");
-  SWSerial.print(" ");
-  SWSerial.print(Kp);
-  SWSerial.print(" ");
-  SWSerial.print(Ki);
-  SWSerial.print(" ");
-  SWSerial.println(Kd);
+  SWprintPID();
   
   myPID.SetTunings(Kp, Ki, Kd);
 
   delay(1000);
-
-  Serial.print("Zero time: ");
-  Serial.println(millis());
-  SWSerial.print("Zero time: ");
-  SWSerial.println(millis());
 }
 
 void loop() {
 
   // Request
   sensors.requestTemperatures();
+
+  //Read serial command
+  swCmd.readSerial();
 
   delay(1200);
 
@@ -172,38 +167,98 @@ void loop() {
   analogWrite(outputPin, int(output));
 
   //Draw it all
-  updateScreen();
+  //updateScreen();
 
 }
 
 void updateScreen() {
   if (millis()>=lastSerial+SERDELAY) {
     lastSerial=millis();
-    
-    Serial.print("Time: ");
-    Serial.print(lastSerial);
-    SWSerial.print("Time: ");
-    SWSerial.print(lastSerial);
-  
-    for (int i=0;i<numDev;i++) {
-      Serial.print("  Temp");
-      Serial.print(i);
-      Serial.print(": ");
-      Serial.print(Temp[i]);
-      SWSerial.print("  Temp");
-      SWSerial.print(i);
-      SWSerial.print(": ");
-      SWSerial.print(Temp[i]);
-    }
-    Serial.print("  Target: ");
-    Serial.print(targetTemp);
-    Serial.print("  Output: ");
-    Serial.println(int(output));
-    SWSerial.print("  Target: ");
-    SWSerial.print(targetTemp);
-    SWSerial.print("  Output: ");
-    SWSerial.println(int(output));
+    SWprintTemp();
   }
+}
+
+void SWprintTemp() {
+  SWprint("Time: ");
+  SWprintul(millis());
+
+  for (int i=0;i<numDev;i++) {
+    SWprint("  Temp");
+    SWprinti(i);
+    SWprint(": ");
+    SWprintd(Temp[i]);
+  }
+  
+  SWprint("  Target: ");
+  SWprintd(targetTemp);
+  SWprint("  Output: ");
+  SWprinti(int(output));
+  SWprintln("");
+}
+
+void SWprintFull() {
+  SWprint("Have ");
+  SWprinti(numDev);
+  SWprintln(" devices");
+ 
+  //assign temp sensor adress and print it
+  for (int i=0;i<numDev;i++) {
+    SWprint("Device ");
+    SWprinti(i);
+    SWprint(": ");
+    printAddress(Thermometer[i]);
+  }
+
+  SWprint("Control themometer is: ");
+  SWprinti(ControlDevice);
+  SWprintln("");
+
+  SWprintPID();
+
+  SWprint("Shutter Position: ");
+  SWprinti(Shutter.read());
+  SWprintln("");
+}
+
+//Print to both Serial and SWSerial
+void SWprint(char *arg) { //String
+  Serial.print(arg);
+  SWSerial.print(arg);
+}
+
+void SWprintln(char *arg) { // String + end of line
+  Serial.println(arg);
+  SWSerial.println(arg);
+}
+
+void SWprinti(int i) { //int
+  Serial.print(i);
+  SWSerial.print(i);
+}
+
+void SWprinth(int h) { //hex
+  Serial.print(h, HEX);
+  SWSerial.print(h, HEX);
+}
+
+void SWprintd(double d) { //double
+  Serial.print(d);
+  SWSerial.print(d);
+}
+
+void SWprintul(unsigned long ul) { //unsigned long
+  Serial.print(ul);
+  SWSerial.print(ul);
+}
+
+void SWprintPID() {
+  SWprint("PID set to: ");
+  SWprintd(Kp);
+  SWprint(" ");
+  SWprintd(Ki);
+  SWprint(" ");
+  SWprintd(Kd);
+  SWprintln("");
 }
 
 // function to print a device address
@@ -212,14 +267,11 @@ void printAddress(DeviceAddress deviceAddress)
   for (uint8_t i = 0; i < 8; i++)
   {
     if (deviceAddress[i] < 16) {
-       Serial.print("0");
-       SWSerial.print("0");
+       SWprint("0");
     }
-    Serial.print(deviceAddress[i], HEX);
-    SWSerial.print(deviceAddress[i], HEX);
+    SWprinth(deviceAddress[i]);
   }
-  Serial.println();
-  SWSerial.println();
+  SWprintln("");
 }
 
 boolean ByteArrayCompare(byte a[], byte b[], int array_size)
@@ -228,5 +280,93 @@ boolean ByteArrayCompare(byte a[], byte b[], int array_size)
      if (a[i] != b[i])
        return(false);
    return(true);
+}
+
+//Commands received
+void Tcmd() {
+  char *arg;
+  arg = swCmd.next();
+  if (arg != NULL) {
+    targetTemp=atof(arg);
+    SWprint("Target set to: ");
+    SWprintd(targetTemp);
+    SWprintln("");
+  } else {
+    SWprintln("T: No data.");
+  }
+}
+
+void Scmd() {
+  char *arg;
+  int i;
+  arg = swCmd.next();
+  if (arg != NULL) {
+    i=atoi(arg);
+    Shutter.write(i);
+  } else {
+    SWprintln("S: No data.");
+  }
+}
+
+void Pcmd() {
+  char *arg;
+  arg = swCmd.next();
+  if (arg != NULL) {
+    Kp=atof(arg);
+    SWprintPID();
+    myPID.SetTunings(Kp, Ki, Kd);
+  } else {
+    SWprintln("P: No data.");
+  }
+}
+
+void Icmd() {
+  char *arg;
+  arg = swCmd.next();
+  if (arg != NULL) {
+    Ki=atof(arg);
+    SWprintPID();
+    myPID.SetTunings(Kp, Ki, Kd);
+  } else {
+    SWprintln("I: No data.");
+  }
+}
+
+void Dcmd() {
+  char *arg;
+  arg = swCmd.next();
+  if (arg != NULL) {
+    Kd=atof(arg);
+    SWprintPID();
+    myPID.SetTunings(Kp, Ki, Kd);
+  } else {
+    SWprintln("D: No data.");
+  }
+}
+
+void Rcmd() {
+  char *arg;
+  arg=swCmd.next();
+  int i;
+  if (arg != NULL) {
+    i=atoi(arg);
+    switch(i) {
+      case 1:
+        SWprintTemp();
+        break;
+      case 2:
+        SWprintFull();
+        break;
+      default:
+        SWprintln("R: Unrecognised.");
+        break;
+      }
+  } else {
+    SWprintln("R: No data.");
+  }
+}
+
+void unrecognized() {
+  SWprintln("Command Unrecognised.");
 }
 
