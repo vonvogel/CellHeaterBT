@@ -73,6 +73,9 @@ double Kp;
 double Ki;
 double Kd;
 
+//Var for Shutter position
+int ShutterPos=0;
+
 //Var for time of last serial send
 unsigned long lastSerial=0;
 
@@ -97,9 +100,6 @@ void setup()
   swCmd.addCommand("W",Wcmd); // set wait between serial data send
   swCmd.addCommand("C",Ccmd); // set controlling thermometer
   swCmd.addDefaultHandler(unrecognized);
-
-  //Servo attach
-  Shutter.attach(SERVOPIN);
 
   //Read from EEPROM
   EEPROM.get(0, ControlAddress);
@@ -167,6 +167,13 @@ void loop() {
   // Request
   sensors.requestTemperatures();
 
+  //give a little time to write to Servo
+  Shutter.attach(SERVOPIN);
+  delay(1);
+  Shutter.write(ShutterPos);
+  delay(1000);
+  Shutter.detach();
+  
   //Read serial command
   swCmd.readSerial();
 
@@ -242,7 +249,7 @@ void SWprintFull() {
   SWprintPID();
 
   SWprint("Shutter Position: ");
-  SWprinti(Shutter.read());
+  SWprinti(ShutterPos);
   SWprintln("");
 
   SWprint("Serial wait: ");
@@ -333,11 +340,9 @@ void Tcmd() {
 
 void Scmd() {
   char *arg;
-  int i;
   arg = swCmd.next();
   if (arg != NULL) {
-    i=atoi(arg);
-    Shutter.write(i);
+    ShutterPos=atoi(arg);
   } else {
     SWprintln("S: No data.");
   }
