@@ -1,3 +1,6 @@
+//include EEPROM to save ControlAdress
+#include <EEPROM.h>
+
 //includes for Servo
 #include <Servo.h>
 
@@ -42,8 +45,8 @@ DallasTemperature sensors(&oneWire);
 DeviceAddress Thermometer[5];
 
 //Adress of the controling themometer
-byte ControlAdress[8]={0x28,0x34,0x98,0x3A,0x03,0x00,0x00,0x11};
-int ControlDevice;
+byte ControlAdress[8];
+int ControlDevice=-1;
 
 // Variable to hold number of devices found
 int numDev;
@@ -80,18 +83,27 @@ void setup()
   SWSerial.begin(9600);
   
   //Set up serial commands for software serial
-  swCmd.addCommand("T",Tcmd);
-  swCmd.addCommand("S",Scmd);
-  swCmd.addCommand("P",Pcmd);
-  swCmd.addCommand("I",Icmd);
-  swCmd.addCommand("D",Dcmd);
-  swCmd.addCommand("R",Rcmd);
-  swCmd.addCommand("W",Wcmd);
+  swCmd.addCommand("T",Tcmd); // set Tagert Temp
+  swCmd.addCommand("S",Scmd); // set shutter position
+  swCmd.addCommand("P",Pcmd); // set P in PID
+  swCmd.addCommand("I",Icmd); // set I in PID
+  swCmd.addCommand("D",Dcmd); // set D in PID
+  swCmd.addCommand("R",Rcmd); // request data
+  swCmd.addCommand("W",Wcmd); // set wait between serial data send
+  swCmd.addCommand("C",Ccmd); // set controlling thermometer
   swCmd.addDefaultHandler(unrecognized);
 
   //Servo attach
   Shutter.attach(SERVOPIN);
 
+  //Read ControlAdress from EEPROM
+  for (int i=0;i<8;i++) {
+    ControlAdress[i]=EEPROM.read(i);
+  }
+  SWprint("Control Adress from EEPROM: ");
+  printAddress(ControlAdress);
+  SWprintln("");
+  
   SWprintln("Locating devices.");
   //initialise the temp sensors on onewWire bus
   sensors.begin();
@@ -103,7 +115,6 @@ void setup()
   SWprinti(numDev);
   SWprintln(" devices");
 
-  
   //assign temp sensor adress and print it
   for (int i=0;i<numDev;i++) {
     if (!sensors.getAddress(Thermometer[i], i)) {
@@ -124,9 +135,13 @@ void setup()
     }
   }
 
-  SWprint("Control themometer is: ");
-  SWprinti(ControlDevice);
-  SWprintln("");
+  if (ControlDevice>-1) {
+    SWprint("Control themometer is: ");
+    SWprinti(ControlDevice);
+    SWprintln("");
+  } else {
+    SWprintln("No control thermometer! Set with C.");
+  }
 
   //initialise PID library
   myPID.SetMode(AUTOMATIC);
@@ -210,6 +225,8 @@ void SWprintFull() {
 
   SWprint("Control themometer is: ");
   SWprinti(ControlDevice);
+  SWprint(": ");
+  printAddress(ControlAdress);
   SWprintln("");
 
   SWprintPID();
@@ -381,6 +398,25 @@ void Rcmd() {
       }
   } else {
     SWprintln("R: No data.");
+  }
+}
+
+void Ccmd() {
+  char *arg;
+  arg = swCmd.next();
+  if (arg != NULL) {
+    ControlDevice=atoi(arg);
+    if (ControlDevice>numDev-1 || ControlDevice < 0) {
+      ControlDevice=-1;
+      SWprintln("C: Device does not exist.");
+    } else {
+      for (uint8_t i = 0; i < 8; i++) {
+        ControlAdress[i] = Thermometer[ControlDevice][i];
+        EEPROM.update(i,Thermometer[ControlDevice][i]);
+      }
+    }
+  } else {
+    SWprintln("C: No data.");
   }
 }
 
