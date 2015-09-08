@@ -1,5 +1,11 @@
-//include EEPROM to save ControlAdress
+//include EEPROM
 #include <EEPROM.h>
+//EEPROM map
+//bytes 0 - 7 ControlAddress
+//bytes 8 - 11 float P
+//bytes 12 - 15 float I
+//bytes 16 - 19 float D
+//bytes 20 - 23 float targetTemp
 
 //includes for Servo
 #include <Servo.h>
@@ -44,8 +50,8 @@ DallasTemperature sensors(&oneWire);
 // arrays to hold device address
 DeviceAddress Thermometer[5];
 
-//Adress of the controling themometer
-byte ControlAdress[8];
+//Address of the controling themometer
+byte ControlAddress[8];
 int ControlDevice=-1;
 
 // Variable to hold number of devices found
@@ -57,16 +63,15 @@ Servo Shutter;
 #define SERVOPIN 10
 
 //Vars for temp
-double targetTemp = 37.0;
-double currentTemp = 20.0;
+double targetTemp;
+double currentTemp;
 double Temp[5];
 double output = 0;
-char tempChar[8];
 
 //Vars for PID
-double Kp = 2.5;
-double Ki = 1.2;
-double Kd = 0.1;
+double Kp;
+double Ki;
+double Kd;
 
 //Var for time of last serial send
 unsigned long lastSerial=0;
@@ -96,12 +101,15 @@ void setup()
   //Servo attach
   Shutter.attach(SERVOPIN);
 
-  //Read ControlAdress from EEPROM
-  for (int i=0;i<8;i++) {
-    ControlAdress[i]=EEPROM.read(i);
-  }
-  SWprint("Control Adress from EEPROM: ");
-  printAddress(ControlAdress);
+  //Read from EEPROM
+  EEPROM.get(0, ControlAddress);
+  EEPROM.get(8, Kp);
+  EEPROM.get(12, Ki);
+  EEPROM.get(16, Kd);
+  EEPROM.get(20, targetTemp);
+  
+  SWprint("Control Address from EEPROM: ");
+  printAddress(ControlAddress);
   SWprintln("");
   
   SWprintln("Locating devices.");
@@ -115,7 +123,7 @@ void setup()
   SWprinti(numDev);
   SWprintln(" devices");
 
-  //assign temp sensor adress and print it
+  //assign temp sensor address and print it
   for (int i=0;i<numDev;i++) {
     if (!sensors.getAddress(Thermometer[i], i)) {
       SWprint("Error: device ");
@@ -127,11 +135,12 @@ void setup()
       SWprinti(i);
       SWprint(": ");
       printAddress(Thermometer[i]);
+      SWprintln("");
       sensors.setResolution(Thermometer[i], TEMPRES);
       delay(1000);
 
       //Check if this thermometer is the controlling one
-      if (ByteArrayCompare(Thermometer[i],ControlAdress,8)) {ControlDevice=i;}
+      if (ByteArrayCompare(Thermometer[i],ControlAddress,8)) {ControlDevice=i;}
     }
   }
 
@@ -215,18 +224,19 @@ void SWprintFull() {
   SWprinti(numDev);
   SWprintln(" devices");
  
-  //assign temp sensor adress and print it
+  //assign temp sensor address and print it
   for (int i=0;i<numDev;i++) {
     SWprint("Device ");
     SWprinti(i);
     SWprint(": ");
     printAddress(Thermometer[i]);
+    SWprintln("");
   }
 
   SWprint("Control themometer is: ");
   SWprinti(ControlDevice);
   SWprint(": ");
-  printAddress(ControlAdress);
+  printAddress(ControlAddress);
   SWprintln("");
 
   SWprintPID();
@@ -296,7 +306,6 @@ void printAddress(DeviceAddress deviceAddress)
     }
     SWprinth(deviceAddress[i]);
   }
-  SWprintln("");
 }
 
 boolean ByteArrayCompare(byte a[], byte b[], int array_size)
@@ -316,6 +325,7 @@ void Tcmd() {
     SWprint("Target set to: ");
     SWprintd(targetTemp);
     SWprintln("");
+    EEPROM.put(20,targetTemp);
   } else {
     SWprintln("T: No data.");
   }
@@ -340,6 +350,7 @@ void Pcmd() {
     Kp=atof(arg);
     SWprintPID();
     myPID.SetTunings(Kp, Ki, Kd);
+    EEPROM.put(8,Kp);
   } else {
     SWprintln("P: No data.");
   }
@@ -352,6 +363,7 @@ void Icmd() {
     Ki=atof(arg);
     SWprintPID();
     myPID.SetTunings(Kp, Ki, Kd);
+    EEPROM.put(12,Ki);
   } else {
     SWprintln("I: No data.");
   }
@@ -364,6 +376,7 @@ void Dcmd() {
     Kd=atof(arg);
     SWprintPID();
     myPID.SetTunings(Kp, Ki, Kd);
+    EEPROM.put(16,Kd);
   } else {
     SWprintln("D: No data.");
   }
@@ -410,10 +423,10 @@ void Ccmd() {
       ControlDevice=-1;
       SWprintln("C: Device does not exist.");
     } else {
-      for (uint8_t i = 0; i < 8; i++) {
-        ControlAdress[i] = Thermometer[ControlDevice][i];
-        EEPROM.update(i,Thermometer[ControlDevice][i]);
+      for (int i=0;i<8;i++) {
+        ControlAddress[i] = Thermometer[ControlDevice][i];
       }
+      EEPROM.put(0,Thermometer[ControlDevice]);
     }
   } else {
     SWprintln("C: No data.");
