@@ -12,7 +12,7 @@
 #include <PID_v1.h> //http://playground.arduino.cc/Code/PIDLibrary, https://github.com/br3ttb/Arduino-PID-Library
 
 //include for parsing serial command
-#include <SerialCommand.h> //https://github.com/kroimon/Arduino-SerialCommand.git
+#include <SerialCommand.h> //https://github.com/scogswell/ArduinoSerialCommand/
 
 // Data wire is plugged into port 2 on the Arduino
 #define ONE_WIRE_BUS 2
@@ -24,7 +24,7 @@
 #define TEMPRES 12
 
 //Minimal duration between serial send (ms)
-#define SERDELAY 1000
+long int serialWait=10000;
 
 //Setup software serial
 SoftwareSerial SWSerial=SoftwareSerial(4,5); // RX, TX
@@ -79,13 +79,14 @@ void setup()
   //Initialise software serial
   SWSerial.begin(9600);
   
-  //Setup serial commands
+  //Set up serial commands for software serial
   swCmd.addCommand("T",Tcmd);
   swCmd.addCommand("S",Scmd);
   swCmd.addCommand("P",Pcmd);
   swCmd.addCommand("I",Icmd);
   swCmd.addCommand("D",Dcmd);
   swCmd.addCommand("R",Rcmd);
+  swCmd.addCommand("W",Wcmd);
   swCmd.addDefaultHandler(unrecognized);
 
   //Servo attach
@@ -145,8 +146,6 @@ void loop() {
   //Read serial command
   swCmd.readSerial();
 
-  delay(1200);
-
   for (int i=0;i<numDev;i++) {
     //Read and debounce
     double oldTemp = Temp[i];
@@ -167,12 +166,12 @@ void loop() {
   analogWrite(outputPin, int(output));
 
   //Draw it all
-  //updateScreen();
+  updateScreen();
 
 }
 
 void updateScreen() {
-  if (millis()>=lastSerial+SERDELAY) {
+  if (millis()>=lastSerial+serialWait && serialWait > 0) {
     lastSerial=millis();
     SWprintTemp();
   }
@@ -218,6 +217,10 @@ void SWprintFull() {
   SWprint("Shutter Position: ");
   SWprinti(Shutter.read());
   SWprintln("");
+
+  SWprint("Serial wait: ");
+  SWprintl(serialWait);
+  SWprintln("");
 }
 
 //Print to both Serial and SWSerial
@@ -249,6 +252,11 @@ void SWprintd(double d) { //double
 void SWprintul(unsigned long ul) { //unsigned long
   Serial.print(ul);
   SWSerial.print(ul);
+}
+
+void SWprintl(long l) { //long
+  Serial.print(l);
+  SWSerial.print(l);
 }
 
 void SWprintPID() {
@@ -341,6 +349,16 @@ void Dcmd() {
     myPID.SetTunings(Kp, Ki, Kd);
   } else {
     SWprintln("D: No data.");
+  }
+}
+
+void Wcmd() {
+  char *arg;
+  arg = swCmd.next();
+  if (arg != NULL) {
+    serialWait=atol(arg);
+  } else {
+    SWprintln("W: No data.");
   }
 }
 
