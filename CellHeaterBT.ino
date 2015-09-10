@@ -76,14 +76,36 @@ double Kd;
 //Var for Shutter position
 int ShutterPos=0;
 
-//Var for time of last serial send
-unsigned long lastSerial=0;
+//Var for timings
+unsigned long conversionStart=0; //time of last tempoerature conversion start
+unsigned long heatPulseStart=0; // time of last heatpulse start
+unsigned long heatDutyOff=0; //time when heat duty cycle ends and heater shuts off
+int skipSerialPrint=1; //print temp data ony every Nth temperature conversion
+int currentPrintSkip=0; //var to hold current skip
+unsigned long servoStart=0; //var to hold time of servo start
+
+
+//var to know if conversion happened this cycle
+boolean converted=false;
+
+//var to know is servo var enabled this move
+boolean servoMoved=true;
+
+//Time settings
+#define CONVTIME 750 //time of conversion in ms
+#define TEMPCYCLE 1000 //time to next temperature reading
+#define HEATPULSE 2000 //time of heat pulse cycle in ms
+#define SERVOTIME 1000 //time to activate servo for a move
 
 //Specify the links and initial tuning parameters
 PID myPID(&currentTemp, &output, &targetTemp, Kp, Ki, Kd, DIRECT);
 
 void setup()
 {
+  //Set ouputpin and LED pin to ouput
+  pinMode(outputPin, OUTPUT); //output pin
+  pinMode(13,OUTPUT); //LED pin
+  
   //initialise serial over USB
   Serial.begin(9600);
 
@@ -152,8 +174,12 @@ void setup()
     SWprintln("No control thermometer! Set with C.");
   }
 
+  //set no wait for conversion, let loop run instead
+  sensors.setWaitForConversion(false);
+  
   //initialise PID library
   myPID.SetMode(AUTOMATIC);
+  myPID.SetOutputLimits(0.0,100.0);
   
   SWprintPID();
   
@@ -162,50 +188,71 @@ void setup()
   delay(1000);
 }
 
-void loop() {
+void loop() { 
+  // Request temperature from sensors
+  if (millis()>conversionStart+TEMPCYCLE) {
+    sensors.requestTemperatures();
+    conversionStart=millis();
+    converted = false;
+  }
 
-  // Request
-  sensors.requestTemperatures();
 
-  //give a little time to write to Servo
-  Shutter.attach(SERVOPIN);
-  delay(1);
-  Shutter.write(ShutterPos);
-  delay(1000);
-  Shutter.detach();
+  //Read temp if time is right
+  if (millis()>conversionStart+CONVTIME && converted==false) {   
+    
+    converted=true;
+    
+    for (int i=0;i<numDev;i++) {
+      
+      //Read
+      double oldTemp = Temp[i];
+      Temp[i] = sensors.getTempC(Thermometer[i]);
+
+      //Debounce
+      //if (Temp[i] == -127.0) {Temp[i] = oldTemp;}  //removed to check interference
+      //if (Temp[i] == 0.0) {Temp[i] = oldTemp;}
+      //if (Temp[i] == 85.0) {Temp[i] = oldTemp;}
+      
+      if (i==ControlDevice) {currentTemp=Temp[i];}
+    }
+    
+    //PID recalculate with new temps
+    myPID.Compute();
+
+    //increase serial skip variable
+    currentPrintSkip++;
+    
+    //Draw tempdata if skipped enough
+    if (currentPrintSkip >= skipSerialPrint && skipSerialPrint>0) {
+      if (servoMoved==false) {Shutter.detach();}
+      SWprintTemp();
+      if (servoMoved==false) {Shutter.attach(SERVOPIN);}
+      currentPrintSkip=0;
+    }
+  }
+
+  //Output heatpulse
+  if (millis()>heatPulseStart+HEATPULSE) {
+    digitalWrite(outputPin, HIGH);
+    digitalWrite(13,HIGH);
+    heatPulseStart=millis();
+    heatDutyOff=map(int(output),0,100,heatPulseStart,heatPulseStart+HEATPULSE);
+  }
+
+  if (millis()>heatDutyOff) {
+    digitalWrite(outputPin,LOW);
+    digitalWrite(13,LOW);
+  }
   
-  //Read serial command
+  //Read serial command 
   swCmd.readSerial();
 
-  for (int i=0;i<numDev;i++) {
-    //Read and debounce
-    double oldTemp = Temp[i];
-    Temp[i] = sensors.getTempC(Thermometer[i]);
-    
-    //if (Temp[i] == -127.0) {Temp[i] = oldTemp;}  //removed to check interference
-    //if (Temp[i] == 0.0) {Temp[i] = oldTemp;}
-    //if (Temp[i] == 85.0) {Temp[i] = oldTemp;}
-    
-    if (i==ControlDevice) {currentTemp=Temp[i];}
-    
+  //Servo control
+  if (millis()>servoStart+SERVOTIME && servoMoved==false) {
+    Shutter.detach();
+    servoMoved=true;
   }
   
-  //PID recalculate
-  myPID.Compute();
-
-  //Set output to new value
-  analogWrite(outputPin, int(output));
-
-  //Draw it all
-  updateScreen();
-
-}
-
-void updateScreen() {
-  if (millis()>=lastSerial+serialWait && serialWait > 0) {
-    lastSerial=millis();
-    SWprintTemp();
-  }
 }
 
 void SWprintTemp() {
@@ -253,7 +300,7 @@ void SWprintFull() {
   SWprintln("");
 
   SWprint("Serial wait: ");
-  SWprintl(serialWait);
+  SWprintl(skipSerialPrint);
   SWprintln("");
 }
 
@@ -343,6 +390,10 @@ void Scmd() {
   arg = swCmd.next();
   if (arg != NULL) {
     ShutterPos=atoi(arg);
+    Shutter.write(ShutterPos);
+    Shutter.attach(SERVOPIN);
+    servoStart=millis();
+    servoMoved=false;
   } else {
     SWprintln("S: No data.");
   }
@@ -391,7 +442,7 @@ void Wcmd() {
   char *arg;
   arg = swCmd.next();
   if (arg != NULL) {
-    serialWait=atol(arg);
+    skipSerialPrint=atoi(arg);
   } else {
     SWprintln("W: No data.");
   }
